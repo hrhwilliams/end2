@@ -1,6 +1,7 @@
 use axum::routing::{any, get, post};
+use serde::Serialize;
 
-use crate::{AppState, handle_websocket};
+use crate::{AppState, DirectoryIndex, User, handle_websocket};
 
 mod auth;
 mod channel;
@@ -8,6 +9,22 @@ mod device;
 mod me;
 mod user;
 mod version;
+
+/// A user plus the VRF proof that binds their directory index to their username.
+#[derive(Serialize)]
+pub struct UserResponse {
+    #[serde(flatten)]
+    user: User,
+    directory: DirectoryIndex,
+}
+
+impl UserResponse {
+    #[must_use]
+    pub fn new(app_state: &AppState, user: User) -> Self {
+        let directory = app_state.directory.index_for(&user.username);
+        Self { user, directory }
+    }
+}
 
 pub struct Api;
 

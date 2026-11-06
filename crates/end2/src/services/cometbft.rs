@@ -10,12 +10,11 @@ use ed25519_dalek::{Signer, SigningKey};
 use r2d2::Pool;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use vodozemac::{Curve25519PublicKey, Ed25519PublicKey};
 
 use crate::{
-    AppError, Device, DeviceId, DeviceKeyService, HistoricalKey, InboundAuthorization,
-    InboundDevice, NewDevice, User,
+    AppError, Device, DeviceId, DeviceKeyService, DirectoryKey, HistoricalKey,
+    InboundAuthorization, InboundDevice, NewDevice, User,
     schema::{device, user as user_table},
 };
 
@@ -123,6 +122,7 @@ pub struct CometBftDeviceKeyService {
     http: Client,
     rpc_url: String,
     signing_key: Arc<SigningKey>,
+    directory: Arc<DirectoryKey>,
     pool: Pool<ConnectionManager<PgConnection>>,
 }
 
@@ -131,12 +131,14 @@ impl CometBftDeviceKeyService {
     pub fn new(
         rpc_url: String,
         signing_key: Arc<SigningKey>,
+        directory: Arc<DirectoryKey>,
         pool: Pool<ConnectionManager<PgConnection>>,
     ) -> Self {
         Self {
             http: Client::new(),
             rpc_url,
             signing_key,
+            directory,
             pool,
         }
     }
@@ -149,8 +151,9 @@ impl CometBftDeviceKeyService {
             .map_err(|e| AppError::PoolError(e.to_string()))
     }
 
-    fn user_hash(user: &User) -> [u8; 32] {
-        Sha256::digest(format!("{}", user.id)).into()
+    // Sent in the `user_hash` wire field.
+    fn index_hex(&self, user: &User) -> String {
+        hex::encode(self.directory.index_for(&user.username).index)
     }
 
     // Submits tx and returns immediately after check_tx with the tx hash.
@@ -366,8 +369,7 @@ impl DeviceKeyService for CometBftDeviceKeyService {
 
     #[tracing::instrument(skip(self))]
     async fn get_device(&self, user: &User, device_id: DeviceId) -> Result<Device, AppError> {
-        let user_hash = Self::user_hash(user);
-        let user_hash_hex = hex::encode(user_hash);
+        let user_hash_hex = self.index_hex(user);
         let query = format!("{user_hash_hex}:{device_id}");
 
         let value = self.abci_query("device", query.as_bytes()).await?;
@@ -385,8 +387,7 @@ impl DeviceKeyService for CometBftDeviceKeyService {
 
     #[tracing::instrument(skip(self))]
     async fn get_all_devices(&self, user: &User) -> Result<Vec<Device>, AppError> {
-        let user_hash = Self::user_hash(user);
-        let user_hash_hex = hex::encode(user_hash);
+        let user_hash_hex = self.index_hex(user);
 
         let value = match self.abci_query("devices", user_hash_hex.as_bytes()).await {
             Ok(v) => v,
@@ -434,7 +435,7 @@ impl DeviceKeyService for CometBftDeviceKeyService {
             .map_err(|_| AppError::InvalidKeySize)?;
 
         let payload = KeyPayload {
-            user_hash: hex::encode(Self::user_hash(user)),
+            user_hash: self.index_hex(user),
             device_id: device_id.to_string(),
             x25519: BASE64_STANDARD_NO_PAD.encode(x25519_bytes),
             ed25519: BASE64_STANDARD_NO_PAD.encode(ed25519_bytes),
@@ -499,7 +500,7 @@ impl DeviceKeyService for CometBftDeviceKeyService {
         user: &User,
         device_id: DeviceId,
     ) -> Result<Vec<HistoricalKey>, AppError> {
-        let user_hash_hex = hex::encode(Self::user_hash(user));
+        let user_hash_hex = self.index_hex(user);
         let device_id_str = device_id.to_string();
 
         // key_add fires on first registration, key_update on each subsequent change.

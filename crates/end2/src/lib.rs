@@ -1,6 +1,7 @@
 #![allow(clippy::missing_errors_doc, clippy::missing_panics_doc)]
 
 mod app;
+mod directory;
 mod errors;
 mod extractors;
 mod middleware;
@@ -15,6 +16,7 @@ mod util;
 mod ws;
 
 pub use app::*;
+pub use directory::*;
 pub use errors::*;
 pub use middleware::*;
 pub use models::*;

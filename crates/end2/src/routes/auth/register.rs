@@ -1,6 +1,6 @@
 use axum::{Json, extract::State, response::IntoResponse};
 
-use crate::{ApiError, AppState, InboundUser, WebSession};
+use crate::{ApiError, AppState, InboundUser, UserResponse, WebSession};
 
 #[tracing::instrument(skip(app_state, new_user), fields(user = %new_user.username))]
 pub async fn register(
@@ -24,5 +24,5 @@ pub async fn register(
             })?;
     }
 
-    Ok(Json(user))
+    Ok(Json(UserResponse::new(&app_state, user)))
 }

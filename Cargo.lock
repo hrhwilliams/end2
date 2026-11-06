@@ -1747,6 +1747,7 @@ dependencies = [
  "curve25519-dalek-derive",
  "digest 0.10.7",
  "fiat-crypto",
+ "rand_core 0.6.4",
  "rustc_version 0.4.1",
  "serde",
  "subtle",
@@ -2147,7 +2148,6 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
- "sha2",
  "thiserror 2.0.18",
  "time",
  "tokio",
@@ -2157,6 +2157,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "vodozemac",
+ "vrf-r255",
 ]
 
 [[package]]
@@ -5642,6 +5643,18 @@ dependencies = [
  "thiserror 2.0.18",
  "x25519-dalek",
  "zeroize",
+]
+
+[[package]]
+name = "vrf-r255"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec2e7c083cc7b8fc3f6a4bc68f92af0e4ec0ec83b2d8a912eeced0aafa7a8379"
+dependencies = [
+ "curve25519-dalek",
+ "rand_core 0.6.4",
+ "sha2",
+ "subtle",
 ]
 
 [[package]]

@@ -6,7 +6,7 @@ use r2d2::Pool;
 use tokio::sync::broadcast;
 
 use crate::{
-    AppError, CookieWebSessionService,
+    AppError, CookieWebSessionService, DirectoryKey,
     services::{AuthService, DeviceKeyService, MessageRelayService, OtkService},
 };
 
@@ -21,6 +21,7 @@ pub struct AppState {
     pub relay: Arc<dyn MessageRelayService>,
     pub web_sessions: CookieWebSessionService,
     pub signing_key: Arc<SigningKey>,
+    pub directory: Arc<DirectoryKey>,
     pool: Pool<ConnectionManager<PgConnection>>,
     /// Sends `AppEvent`s to subscribers
     broadcaster: broadcast::Sender<AppEvent>,
@@ -35,6 +36,7 @@ impl AppState {
         relay: Arc<dyn MessageRelayService>,
         pool: Pool<ConnectionManager<PgConnection>>,
         signing_key: Arc<SigningKey>,
+        directory: Arc<DirectoryKey>,
     ) -> Self {
         let (broadcaster, _) = broadcast::channel(256);
 
@@ -45,6 +47,7 @@ impl AppState {
             relay,
             web_sessions: CookieWebSessionService::new(pool.clone()),
             signing_key,
+            directory,
             pool,
             broadcaster,
         }

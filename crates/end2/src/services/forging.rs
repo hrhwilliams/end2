@@ -6,16 +6,14 @@ use ed25519_dalek::SigningKey;
 use r2d2::Pool;
 
 use crate::{
-    AppError, CometBftDeviceKeyService, Device, DeviceId, DeviceKeyService, HistoricalKey,
-    InboundDevice, User,
+    AppError, CometBftDeviceKeyService, Device, DeviceId, DeviceKeyService, DirectoryKey,
+    HistoricalKey, InboundDevice, User,
 };
 
 // Attacker keys injected as a forged secondary device. The self-signature
-// is the one bundled with the attacker's pre-cooked keypair so the chain
-// stores a non-empty signature field, but no `authorization` is supplied —
-// which is exactly what makes the forgery detectable. A legitimate
-// non-first device must carry an authorization signed by a previously
-// valid device's ed25519 (see routes/device/create.rs::validate_device_keys).
+// is valid for the attacker's keypair, but no `authorization` is supplied.
+// The CometBFT validators reject the tx because the victim's index already
+// holds a root key, so the forged device never reaches the chain.
 const ATTACKER_X25519_B64: &str = "IeyxjOtLNBl9EZe9f0T/i9LBthJp1HicM1Sjd0/Lw3w";
 const ATTACKER_ED25519_B64: &str = "8dvhUrR02tiWTf5IKQTD2l0pXPm6Ja/+Bzbnvrub468";
 const ATTACKER_SELF_SIG_B64: &str =
@@ -31,10 +29,11 @@ impl ForgingDeviceKeyService {
     pub fn new(
         rpc_url: String,
         signing_key: Arc<SigningKey>,
+        directory: Arc<DirectoryKey>,
         pool: Pool<ConnectionManager<PgConnection>>,
     ) -> Self {
         Self {
-            inner: CometBftDeviceKeyService::new(rpc_url, signing_key, pool),
+            inner: CometBftDeviceKeyService::new(rpc_url, signing_key, directory, pool),
         }
     }
 

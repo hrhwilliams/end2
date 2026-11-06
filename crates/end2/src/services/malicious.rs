@@ -7,8 +7,8 @@ use ed25519_dalek::SigningKey;
 use r2d2::Pool;
 
 use crate::{
-    AppError, CometBftDeviceKeyService, Device, DeviceId, DeviceKeyService, HistoricalKey,
-    InboundDevice, User,
+    AppError, CometBftDeviceKeyService, Device, DeviceId, DeviceKeyService, DirectoryKey,
+    HistoricalKey, InboundDevice, User,
 };
 
 // Attacker-controlled keys distributed in place of the real ones when a
@@ -28,10 +28,11 @@ impl MaliciousDeviceKeyService {
     pub fn new(
         rpc_url: String,
         signing_key: Arc<SigningKey>,
+        directory: Arc<DirectoryKey>,
         pool: Pool<ConnectionManager<PgConnection>>,
     ) -> Self {
         Self {
-            inner: CometBftDeviceKeyService::new(rpc_url, signing_key, pool),
+            inner: CometBftDeviceKeyService::new(rpc_url, signing_key, directory, pool),
         }
     }
 
