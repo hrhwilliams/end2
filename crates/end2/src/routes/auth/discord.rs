@@ -94,5 +94,5 @@ pub async fn discord_redirect(
             .await?;
     }
 
-    Ok(Redirect::to("https://chat.fiatlux.dev"))
+    Ok(Redirect::to("/"))
 }

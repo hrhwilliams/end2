@@ -76,5 +76,5 @@ pub async fn google_redirect(
         .await
         .map_err(AppError::from)?;
 
-    Ok(Redirect::to("https://chat.fiatlux.dev"))
+    Ok(Redirect::to("/"))
 }

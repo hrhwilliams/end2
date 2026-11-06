@@ -7,6 +7,20 @@ the service with a distributed ledger, preventing the service from maliciously
 distributing keys and thus compromising the security of its users intentionally
 or due to a compromise.
 
+## Quick start
+
+Needs Docker. On Windows, run it from Git Bash.
+
+```sh
+./setup.sh                # writes .env, generates keys, creates the CometBFT testnet
+docker compose up --build # then open http://localhost:8000
+```
+
+`setup.sh` only fills in what is missing, so it is safe to re-run. Discord and Google login
+stay off until their `*_OAUTH_*` variables are set. To serve the public site through the
+Cloudflare tunnel instead, add `COMPOSE_PROFILES=tunnel`, `NGINX_CONF=nginx.conf` and
+`TUNNEL_TOKEN` to `.env` and put the origin certificates in `config/ssl/`.
+
 ## Organization
 
 |crate|path|description|

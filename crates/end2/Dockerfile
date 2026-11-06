@@ -1,4 +1,4 @@
-FROM rust:1.91-slim-trixie AS chef
+FROM rust:1.99-slim-trixie AS chef
 WORKDIR /build
 RUN cargo install cargo-chef
 
@@ -20,6 +20,7 @@ FROM debian:trixie-slim AS runtime
 RUN apt-get  update && apt-get install -y linux-perf postgresql
 WORKDIR /app
 COPY --from=backend-builder /build/target/release/end2 .
+COPY --from=backend-builder /build/target/release/gen_keys .
 COPY --from=backend-builder /usr/local/cargo/bin/diesel /usr/local/bin/diesel
 COPY --from=planner /build/end2/migrations /app/migrations
 COPY --from=planner /build/end2/entrypoint.sh .

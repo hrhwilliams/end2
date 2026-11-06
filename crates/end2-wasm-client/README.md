@@ -37,6 +37,6 @@ f = floor((n-1)/3). If the proof fails or no quorum forms, the lookup fails. If
 `VITE_COMET_RPC_URLS` is unset, the client asks the provider for keys, as the
 Postgres and Ethereum controls expect.
 
-In the testbed, the `/comet/<n>/` proxies in `config/nginx/nginx.conf` run on the
+In the testbed, the `/comet/<n>/` proxies in `config/nginx/locations.conf` run on the
 provider's host, so they give no independence from the provider. A real deployment
 points each URL at a validator that a separate party operates.
