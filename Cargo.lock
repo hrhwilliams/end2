@@ -2188,6 +2188,7 @@ dependencies = [
  "time",
  "uuid",
  "vodozemac",
+ "vrf-r255",
  "wasm-bindgen",
 ]
 

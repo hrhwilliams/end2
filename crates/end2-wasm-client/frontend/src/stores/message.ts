@@ -96,11 +96,25 @@ export const useMessageStore = defineStore("message", () => {
       payloads: [],
     };
 
-    for (const device of devices) {
-      if (device.device_id !== deviceId) {
+    const deviceStore = useDeviceStore();
+    for (const listed of devices) {
+      if (listed.device_id !== deviceId) {
+        // The provider's channel info names the devices. Their keys must come from fetchDevice, which checks the directory.
+        const device = await deviceStore.fetchDevice(
+          listed.user_id,
+          listed.device_id,
+        );
+        if (!device.ok) {
+          console.error(
+            "failed to fetch device for encryption:",
+            listed.device_id,
+            device.error,
+          );
+          continue;
+        }
         const payload = await encryptMessage(
           channelId,
-          device,
+          device.value,
           plaintext,
           userStore.me.id,
         );
@@ -109,7 +123,7 @@ export const useMessageStore = defineStore("message", () => {
         } else {
           console.error(
             "failed to encrypt for device:",
-            device.device_id,
+            listed.device_id,
             payload.error,
           );
         }

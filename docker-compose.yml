@@ -28,7 +28,9 @@ services:
     depends_on:
       - backend
     networks:
-      - end2-network
+      end2-network:
+      localnet:
+        ipv4_address: 192.167.10.10
 
   tempo:
     image: grafana/tempo:2.10.2
