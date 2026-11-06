@@ -7,6 +7,33 @@ the service with a distributed ledger, preventing the service from maliciously
 distributing keys and thus compromising the security of its users intentionally
 or due to a compromise.
 
+## Breakdown
+
+### Private blockchain validators
+
+### VRF usernames
+
+List transactions recorded on the chain from one node:
+
+```sh
+curl -s -G https://chat.fiatlux.dev/comet/0/tx_search --data-urlencode 'query="tx.height>0"' \
+  | grep -o '"tx":"[^"]*"' | cut -d'"' -f4 | while read t; do echo "$t" | base64 -d; echo; done
+```
+
+Look up a user by their VRF hash:
+
+```sh
+curl -s -G https://chat.fiatlux.dev/comet/0/abci_query --data-urlencode 'path="devices"' \
+  --data-urlencode 'data="b691af57d7d28b1cabd26e5ed4ea98307ad586f488dc0efdad7ff33d09d6f747b9d792737298613360c65898ae014dca245646f6f4578c4ca0488098f089c3da"'
+```
+
+Look up a user by the sha256 of their username:
+
+```sh
+curl -s -G https://chat.fiatlux.dev/comet/0/abci_query --data-urlencode 'path="devices"' \
+  --data-urlencode "data=\"$(printf %s someone2 | sha256sum | cut -d' ' -f1)\""
+```
+
 ## Quick start
 
 Needs Docker. On Windows, run it from Git Bash.
