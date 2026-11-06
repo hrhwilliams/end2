@@ -5,7 +5,7 @@ use vrf_r255::{PublicKey, SecretKey};
 
 use crate::serialize_as_base64;
 
-// Must match VRF_ALPHA_PREFIX in end2-wasm-client/src/lib.rs.
+// Must match VRF_ALPHA_PREFIX in end2-wasm-client/src/directory.rs.
 const VRF_ALPHA_PREFIX: &[u8] = b"end2/username/v1:";
 
 fn alpha(username: &str) -> Vec<u8> {
