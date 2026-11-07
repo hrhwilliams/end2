@@ -1,5 +1,5 @@
-Require Import List.
-Import ListNotations.
+From Stdlib Require Import List.
+Import List.ListNotations.
 
 Section KeyDirectory.
 
