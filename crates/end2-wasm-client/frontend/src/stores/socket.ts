@@ -37,7 +37,7 @@ export const useWebSocketStore = defineStore("socket", () => {
 
     counter.value = -1;
     ws.value = new WebSocket(
-      `wss://chat.fiatlux.dev/api/me/device/${deviceId}/ws`,
+      `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/me/device/${deviceId}/ws`,
     );
 
     ws.value.onopen = () => {

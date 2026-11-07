@@ -4,6 +4,11 @@ import type { UserId } from "../types/user";
 import { ref } from "vue";
 import { Err, Ok, request, type ApiResult } from "../api";
 import { useUserStore } from "./user";
+import {
+  fetchDeviceKeys,
+  readsValidators,
+  verifiedIndex,
+} from "../services/directory";
 
 export const useDeviceStore = defineStore("device", () => {
   const devices = ref<Record<UserId, Record<DeviceId, DeviceInfo>>>({});
@@ -32,6 +37,25 @@ export const useDeviceStore = defineStore("device", () => {
     return Ok(response.value);
   }
 
+  async function fetchFromValidators(
+    userId: string,
+    deviceId: string,
+  ): Promise<ApiResult<DeviceInfo>> {
+    const user = await useUserStore().getUser(userId);
+    if (!user) {
+      return Err({ status: 0, message: `unknown user ${userId}` });
+    }
+    const index = verifiedIndex(user);
+    if (!index.ok) {
+      return index;
+    }
+    const keys = await fetchDeviceKeys(index.value, deviceId);
+    if (!keys.ok) {
+      return keys;
+    }
+    return Ok({ device_id: deviceId, user_id: userId, ...keys.value });
+  }
+
   async function fetchDevice(
     userId: string,
     deviceId: string,
@@ -40,10 +64,9 @@ export const useDeviceStore = defineStore("device", () => {
       return Ok(devices.value[userId][deviceId]);
     }
 
-    const response = await request<DeviceInfo>(
-      `/user/${userId}/device/${deviceId}`,
-      "GET",
-    );
+    const response = readsValidators
+      ? await fetchFromValidators(userId, deviceId)
+      : await request<DeviceInfo>(`/user/${userId}/device/${deviceId}`, "GET");
     if (response.ok) {
       if (!devices.value[userId]) {
         devices.value[userId] = {};

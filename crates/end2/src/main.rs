@@ -10,7 +10,7 @@ use base64::{Engine, prelude::BASE64_STANDARD_NO_PAD};
 use diesel::{PgConnection, r2d2::ConnectionManager};
 use ed25519_dalek::SigningKey;
 use end2::{
-    AppState, CometBftDeviceKeyService, DeviceKeyService, EthDeviceKeyService,
+    AppState, CometBftDeviceKeyService, DeviceKeyService, DirectoryKey, EthDeviceKeyService,
     ForgingDeviceKeyService, MaliciousDeviceKeyService,
 };
 use mimalloc::MiMalloc;
@@ -105,9 +105,15 @@ async fn setup_eth_device_keys(
 fn setup_comet_device_keys(
     pool: Pool<ConnectionManager<PgConnection>>,
     signing_key: Arc<SigningKey>,
+    directory: Arc<DirectoryKey>,
 ) -> Arc<dyn DeviceKeyService> {
     let rpc_url = std::env::var("COMET_RPC_URL").expect("COMET_RPC_URL must be set");
-    Arc::new(CometBftDeviceKeyService::new(rpc_url, signing_key, pool))
+    Arc::new(CometBftDeviceKeyService::new(
+        rpc_url,
+        signing_key,
+        directory,
+        pool,
+    ))
 }
 
 fn setup_db_device_keys(pool: Pool<ConnectionManager<PgConnection>>) -> Arc<dyn DeviceKeyService> {
@@ -117,17 +123,63 @@ fn setup_db_device_keys(pool: Pool<ConnectionManager<PgConnection>>) -> Arc<dyn 
 fn setup_malicious_device_keys(
     pool: Pool<ConnectionManager<PgConnection>>,
     signing_key: Arc<SigningKey>,
+    directory: Arc<DirectoryKey>,
 ) -> Arc<dyn DeviceKeyService> {
     let rpc_url = std::env::var("COMET_RPC_URL").expect("COMET_RPC_URL must be set");
-    Arc::new(MaliciousDeviceKeyService::new(rpc_url, signing_key, pool))
+    Arc::new(MaliciousDeviceKeyService::new(
+        rpc_url,
+        signing_key,
+        directory,
+        pool,
+    ))
 }
 
 fn setup_forging_device_keys(
     pool: Pool<ConnectionManager<PgConnection>>,
     signing_key: Arc<SigningKey>,
+    directory: Arc<DirectoryKey>,
 ) -> Arc<dyn DeviceKeyService> {
     let rpc_url = std::env::var("COMET_RPC_URL").expect("COMET_RPC_URL must be set");
-    Arc::new(ForgingDeviceKeyService::new(rpc_url, signing_key, pool))
+    Arc::new(ForgingDeviceKeyService::new(
+        rpc_url,
+        signing_key,
+        directory,
+        pool,
+    ))
+}
+
+/// Builds a provider's OAuth handler from `{PREFIX}_OAUTH_{CLIENT_ID,SECRET,REDIRECT}`,
+/// or warns and returns `None` so the server still starts without that login option.
+fn load_oauth(
+    provider: &str,
+    prefix: &str,
+    auth_url: &str,
+    token_url: &str,
+    scopes: Vec<&'static str>,
+) -> Option<OAuthHandler> {
+    let var = |name: &str| {
+        std::env::var(format!("{prefix}_OAUTH_{name}"))
+            .ok()
+            .filter(|value| !value.is_empty())
+    };
+    match (var("CLIENT_ID"), var("SECRET"), var("REDIRECT")) {
+        (Some(client_id), Some(client_secret), Some(redirect)) => {
+            Some(OAuthHandler::new(OAuthInfo {
+                client_id,
+                client_secret,
+                redirect,
+                auth_url: auth_url.to_string(),
+                token_url: token_url.to_string(),
+                scopes,
+            }))
+        }
+        _ => {
+            tracing::warn!(
+                "{provider} OAuth disabled: set {prefix}_OAUTH_CLIENT_ID, {prefix}_OAUTH_SECRET and {prefix}_OAUTH_REDIRECT to enable it"
+            );
+            None
+        }
+    }
 }
 
 #[tokio::main]
@@ -155,38 +207,6 @@ async fn main() -> Result<(), std::io::Error> {
             .expect("invalid key length"),
     );
 
-    // Load variables for Discord OAuth2 flow
-    let client_id =
-        std::env::var("DISCORD_OAUTH_CLIENT_ID").expect("DISCORD_OAUTH_CLIENT_ID must be set");
-    let client_secret =
-        std::env::var("DISCORD_OAUTH_SECRET").expect("DISCORD_OAUTH_SECRET must be set");
-    let redirect =
-        std::env::var("DISCORD_OAUTH_REDIRECT").expect("DISCORD_OAUTH_REDIRECT must be set");
-    let discord_oauth = OAuthHandler::new(OAuthInfo {
-        client_id,
-        client_secret,
-        redirect,
-        auth_url: DISCORD_AUTHORIZE_URL.to_string(),
-        token_url: DISCORD_TOKEN_URL.to_string(),
-        scopes: vec!["identify"],
-    });
-
-    // Load variables for Google OAuth2 flow
-    let client_id =
-        std::env::var("GOOGLE_OAUTH_CLIENT_ID").expect("GOOGLE_OAUTH_CLIENT_ID must be set");
-    let client_secret =
-        std::env::var("GOOGLE_OAUTH_SECRET").expect("GOOGLE_OAUTH_SECRET must be set");
-    let redirect =
-        std::env::var("GOOGLE_OAUTH_REDIRECT").expect("GOOGLE_OAUTH_REDIRECT must be set");
-    let google_oauth = OAuthHandler::new(OAuthInfo {
-        client_id,
-        client_secret,
-        redirect,
-        auth_url: GOOGLE_AUTHORIZE_URL.to_string(),
-        token_url: GOOGLE_TOKEN_URL.to_string(),
-        scopes: vec!["openid", "email", "profile"],
-    });
-
     // Load PostgreSQL database
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let manager = ConnectionManager::<PgConnection>::new(&database_url);
@@ -195,22 +215,47 @@ async fn main() -> Result<(), std::io::Error> {
         .expect("Failed to connect to Postgres");
 
     let mut oauth = std::collections::HashMap::new();
-    oauth.insert("discord", discord_oauth);
-    oauth.insert("google", google_oauth);
+    if let Some(discord) = load_oauth(
+        "discord",
+        "DISCORD",
+        DISCORD_AUTHORIZE_URL,
+        DISCORD_TOKEN_URL,
+        vec!["identify"],
+    ) {
+        oauth.insert("discord", discord);
+    }
+    if let Some(google) = load_oauth(
+        "google",
+        "GOOGLE",
+        GOOGLE_AUTHORIZE_URL,
+        GOOGLE_TOKEN_URL,
+        vec!["openid", "email", "profile"],
+    ) {
+        oauth.insert("google", google);
+    }
 
     let signing_key = Arc::new(signing_key);
 
-    // let device_keys = setup_comet_device_keys(pool.clone(), signing_key.clone());
+    let directory = Arc::new(
+        DirectoryKey::from_base64(
+            &std::env::var("VRF_SECRET_KEY").expect("VRF_SECRET_KEY must be set"),
+        )
+        .expect("invalid VRF_SECRET_KEY"),
+    );
+    tracing::info!(vrf_public_key = %directory.public_key_base64(), "loaded VRF directory key");
+
+    let device_keys = setup_comet_device_keys(pool.clone(), signing_key.clone(), directory.clone());
     // let device_keys = setup_db_device_keys(pool.clone());
     // let device_keys = setup_eth_device_keys(pool.clone()).await;
-    // let device_keys = setup_malicious_device_keys(pool.clone(), signing_key.clone());
-    let device_keys = setup_forging_device_keys(pool.clone(), signing_key.clone());
+    // let device_keys = setup_malicious_device_keys(pool.clone(), signing_key.clone(), directory.clone());
+    // let device_keys =
+    //     setup_forging_device_keys(pool.clone(), signing_key.clone(), directory.clone());
 
     let auth = Arc::new(DbAuthService::new(pool.clone(), oauth));
     let otks = Arc::new(DbOtkService::new(pool.clone()));
     let relay = Arc::new(DbMessageRelayService::new(pool.clone()));
 
-    let app_state = AppState::new(auth, device_keys, otks, relay, pool, signing_key);
+    let app_state = AppState::new(auth, device_keys, otks, relay, pool, signing_key, directory);
 
     let app = App::new(app_state);
     let listener = TcpListener::bind((ip, port)).await.expect("TcpListener");

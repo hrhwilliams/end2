@@ -45,7 +45,16 @@ fn decode_key32(s: &str) -> Result<[u8; 32], &'static str> {
         .map_err(|_| "key must be 32 bytes")
 }
 
-#[derive(Deserialize)]
+fn decode_sig(s: &str) -> Result<Signature, &'static str> {
+    let bytes: [u8; 64] = BASE64_STANDARD_NO_PAD
+        .decode(s)
+        .map_err(|_| "signature is not valid base64")?
+        .try_into()
+        .map_err(|_| "signature must be 64 bytes")?;
+    Ok(Signature::from_bytes(&bytes))
+}
+
+#[derive(Serialize, Deserialize)]
 struct KeyUploadTx {
     payload: KeyPayload,
     signature: String,
@@ -55,6 +64,15 @@ struct KeyUploadTx {
 struct DeviceKeys {
     x25519: [u8; 32],
     ed25519: [u8; 32],
+}
+
+// A tx that passed every stateless check: provider signature, encoding, device self-signature.
+struct Upload {
+    index: String,
+    device_id: String,
+    keys: DeviceKeys,
+    self_signature: Signature,
+    authorization: Option<(String, Signature)>,
 }
 
 // Pending state produced by finalize_block, written atomically in commit.
@@ -83,23 +101,102 @@ impl KeyDirectoryApp {
     }
 }
 
-fn verify_tx(bytes: &[u8], key: &VerifyingKey) -> Result<KeyPayload, &'static str> {
+fn verify_tx(bytes: &[u8], key: &VerifyingKey) -> Result<Upload, &'static str> {
     let tx: KeyUploadTx = serde_json::from_slice(bytes).map_err(|_| "invalid JSON")?;
 
-    let sig_bytes = BASE64_STANDARD_NO_PAD
-        .decode(&tx.signature)
-        .map_err(|_| "signature is not valid base64")?;
-
-    let sig_bytes: [u8; 64] = sig_bytes
-        .try_into()
-        .map_err(|_| "signature must be 64 bytes")?;
-
-    let signature = Signature::from_bytes(&sig_bytes);
+    let signature = decode_sig(&tx.signature)?;
     let msg = serde_json::to_vec(&tx.payload).map_err(|_| "failed to serialize payload")?;
     key.verify(&msg, &signature)
         .map_err(|_| "signature verification failed")?;
 
-    Ok(tx.payload)
+    let p = tx.payload;
+    // Store keys are "<index>/<device_id>": a '/' in either would let one index write under another.
+    let index_ok = !p.user_hash.is_empty()
+        && p.user_hash
+            .bytes()
+            .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    if !index_ok || p.device_id.is_empty() || p.device_id.contains('/') {
+        return Err("malformed index or device id");
+    }
+
+    let keys = DeviceKeys {
+        x25519: decode_key32(&p.x25519)?,
+        ed25519: decode_key32(&p.ed25519)?,
+    };
+    let self_signature = decode_sig(&p.signature)?;
+    VerifyingKey::from_bytes(&keys.ed25519)
+        .map_err(|_| "invalid ed25519 key")?
+        .verify_strict(&[keys.x25519, keys.ed25519].concat(), &self_signature)
+        .map_err(|_| "device self-signature verification failed")?;
+
+    let authorization = match p.authorization {
+        Some(a) => Some((a.authorizing_device_id, decode_sig(&a.signature)?)),
+        None => None,
+    };
+
+    Ok(Upload {
+        index: p.user_hash,
+        device_id: p.device_id,
+        keys,
+        self_signature,
+        authorization,
+    })
+}
+
+/// Decides whether `upload` may be written, given every device already under its index
+/// (committed state plus earlier txs in the same block). Returns the event type.
+fn admit(
+    upload: &Upload,
+    existing: &BTreeMap<String, DeviceKeys>,
+) -> Result<&'static str, &'static str> {
+    if existing.is_empty() {
+        return Ok("key_add");
+    }
+
+    let (authorizing_id, signature) = upload
+        .authorization
+        .as_ref()
+        .ok_or("index already has a root key; authorization required")?;
+    let is_update = existing.contains_key(&upload.device_id);
+    if is_update && *authorizing_id != upload.device_id {
+        return Err("key update must be authorized by the same device's current key");
+    }
+    let authorizing = existing
+        .get(authorizing_id)
+        .ok_or("authorizing device is not registered under this index")?;
+    VerifyingKey::from_bytes(&authorizing.ed25519)
+        .map_err(|_| "authorizing device has an invalid ed25519 key")?
+        .verify_strict(&upload.self_signature.to_bytes(), signature)
+        .map_err(|_| "authorization signature verification failed")?;
+
+    Ok(if is_update { "key_update" } else { "key_add" })
+}
+
+fn devices_under(
+    store: &Store,
+    overlay: &BTreeMap<Vec<u8>, Vec<u8>>,
+    index: &str,
+) -> BTreeMap<String, DeviceKeys> {
+    let prefix = Store::device_prefix(index);
+    let pending = overlay
+        .range(prefix.clone()..)
+        .take_while(|(k, _)| k.starts_with(&prefix))
+        .map(|(k, v)| {
+            let id = std::str::from_utf8(&k[prefix.len()..]).expect("utf8 device id in overlay");
+            (id.to_owned(), v.clone())
+        });
+    // Overlay entries come last so they replace committed ones in the collected map.
+    store
+        .iter_user_devices(index)
+        .into_iter()
+        .chain(pending)
+        .map(|(id, v)| {
+            (
+                id,
+                serde_json::from_slice(&v).expect("stored DeviceKeys json"),
+            )
+        })
+        .collect()
 }
 
 fn check_tx_err(log: &str) -> ResponseCheckTx {
@@ -142,13 +239,17 @@ impl Application for KeyDirectoryApp {
         let mut tx_results: Vec<ExecTxResult> = Vec::with_capacity(req.txs.len());
 
         // Overlay of this block's writes keyed by rocksdb key, for hash computation
-        // and to detect add-vs-update within the same block.
+        // and so admission of later txs in the block sees earlier ones.
         let mut overlay: BTreeMap<Vec<u8>, Vec<u8>> = BTreeMap::new();
         let mut tree_updates: Vec<(KeyHash, Option<Vec<u8>>)> = Vec::with_capacity(req.txs.len());
 
         for raw in &req.txs {
-            let payload = match verify_tx(raw, &self.verifying_key) {
-                Ok(p) => p,
+            let admitted = verify_tx(raw, &self.verifying_key).and_then(|upload| {
+                let existing = devices_under(&self.store, &overlay, &upload.index);
+                admit(&upload, &existing).map(|event_type| (upload, event_type))
+            });
+            let (upload, event_type) = match admitted {
+                Ok(v) => v,
                 Err(msg) => {
                     tx_results.push(ExecTxResult {
                         code: 1,
@@ -159,31 +260,15 @@ impl Application for KeyDirectoryApp {
                 }
             };
 
-            let (x25519, ed25519) = match (
-                decode_key32(&payload.x25519),
-                decode_key32(&payload.ed25519),
-            ) {
-                (Ok(x), Ok(e)) => (x, e),
-                _ => {
-                    tx_results.push(ExecTxResult {
-                        code: 1,
-                        log: "invalid key encoding".to_owned(),
-                        ..Default::default()
-                    });
-                    continue;
-                }
-            };
-
-            let new_keys = DeviceKeys { x25519, ed25519 };
-            let user_hash_hex = payload.user_hash.clone();
-            let device_id = payload.device_id.clone();
-
+            let Upload {
+                index: user_hash_hex,
+                device_id,
+                keys,
+                ..
+            } = upload;
             let rk = Store::device_key(&user_hash_hex, &device_id);
-            let existed = overlay.contains_key(&rk)
-                || self.store.get_device(&user_hash_hex, &device_id).is_some();
-            let event_type = if existed { "key_update" } else { "key_add" };
 
-            let value_json = serde_json::to_vec(&new_keys).expect("DeviceKeys json");
+            let value_json = serde_json::to_vec(&keys).expect("DeviceKeys json");
             overlay.insert(rk.clone(), value_json.clone());
 
             let key_hash = KeyHash::with::<Sha256>(&rk);
@@ -333,4 +418,312 @@ fn main() -> Result<(), tendermint_abci::Error> {
         .bind(format!("0.0.0.0:{port}"), app)
         .expect("failed to bind ABCI server")
         .listen()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    const INDEX: &str = "ab12";
+    const NOT_AUTHORIZED: &str = "index already has a root key; authorization required";
+
+    struct Dev {
+        sk: SigningKey,
+        x25519: [u8; 32],
+    }
+
+    impl Dev {
+        fn new(seed: u8) -> Self {
+            Self {
+                sk: SigningKey::from_bytes(&[seed; 32]),
+                x25519: [seed.wrapping_add(100); 32],
+            }
+        }
+
+        fn ed25519(&self) -> [u8; 32] {
+            self.sk.verifying_key().to_bytes()
+        }
+
+        fn self_sig(&self) -> Signature {
+            self.sk.sign(&[self.x25519, self.ed25519()].concat())
+        }
+    }
+
+    fn provider() -> SigningKey {
+        SigningKey::from_bytes(&[1; 32])
+    }
+
+    fn upload_signed(
+        index: &str,
+        device_id: &str,
+        dev: &Dev,
+        self_sig: Signature,
+        authorized_by: Option<(&str, &Dev)>,
+    ) -> Vec<u8> {
+        let payload = KeyPayload {
+            user_hash: index.to_owned(),
+            device_id: device_id.to_owned(),
+            x25519: BASE64_STANDARD_NO_PAD.encode(dev.x25519),
+            ed25519: BASE64_STANDARD_NO_PAD.encode(dev.ed25519()),
+            signature: BASE64_STANDARD_NO_PAD.encode(self_sig.to_bytes()),
+            authorization: authorized_by.map(|(id, by)| InboundAuthorization {
+                authorizing_device_id: id.to_owned(),
+                signature: BASE64_STANDARD_NO_PAD
+                    .encode(by.sk.sign(&self_sig.to_bytes()).to_bytes()),
+            }),
+        };
+        let signature = provider().sign(&serde_json::to_vec(&payload).expect("payload json"));
+        serde_json::to_vec(&KeyUploadTx {
+            payload,
+            signature: BASE64_STANDARD_NO_PAD.encode(signature.to_bytes()),
+        })
+        .expect("tx json")
+    }
+
+    fn upload(
+        index: &str,
+        device_id: &str,
+        dev: &Dev,
+        authorized_by: Option<(&str, &Dev)>,
+    ) -> Vec<u8> {
+        upload_signed(index, device_id, dev, dev.self_sig(), authorized_by)
+    }
+
+    struct Chain {
+        app: KeyDirectoryApp,
+        height: i64,
+    }
+
+    impl Chain {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("end2-cometbft-test-{name}"));
+            let _ = std::fs::remove_dir_all(&dir);
+            let store = Store::open(dir.to_str().expect("utf8 temp path")).expect("open store");
+            Self {
+                app: KeyDirectoryApp::new(provider().verifying_key(), store),
+                height: 0,
+            }
+        }
+
+        fn block(&mut self, txs: Vec<Vec<u8>>) -> Vec<ExecTxResult> {
+            self.height += 1;
+            let res = self.app.finalize_block(RequestFinalizeBlock {
+                txs: txs.into_iter().map(Into::into).collect(),
+                height: self.height,
+                ..Default::default()
+            });
+            self.app.commit();
+            res.tx_results
+        }
+
+        fn check_tx(&self, tx: &[u8]) -> u32 {
+            self.app
+                .check_tx(RequestCheckTx {
+                    tx: tx.to_vec().into(),
+                    ..Default::default()
+                })
+                .code
+        }
+
+        fn ed25519_by_device(&self, index: &str) -> BTreeMap<String, [u8; 32]> {
+            let res = self.app.query(RequestQuery {
+                path: "devices".into(),
+                data: index.as_bytes().to_vec().into(),
+                ..Default::default()
+            });
+            if res.code != 0 {
+                return BTreeMap::new();
+            }
+            serde_json::from_slice::<BTreeMap<String, DeviceKeys>>(&res.value)
+                .expect("devices json")
+                .into_iter()
+                .map(|(id, keys)| (id, keys.ed25519))
+                .collect()
+        }
+    }
+
+    fn event_type(res: &ExecTxResult) -> &str {
+        &res.events[0].r#type
+    }
+
+    fn expected(entries: &[(&str, &Dev)]) -> BTreeMap<String, [u8; 32]> {
+        entries
+            .iter()
+            .map(|(id, dev)| ((*id).to_owned(), dev.ed25519()))
+            .collect()
+    }
+
+    #[test]
+    fn root_key_on_empty_index_is_accepted() {
+        let mut chain = Chain::new("root");
+        let alice = Dev::new(10);
+
+        let res = chain.block(vec![upload(INDEX, "phone", &alice, None)]);
+
+        assert_eq!(res[0].code, 0, "{}", res[0].log);
+        assert_eq!(event_type(&res[0]), "key_add");
+        assert_eq!(
+            chain.ed25519_by_device(INDEX),
+            expected(&[("phone", &alice)])
+        );
+    }
+
+    #[test]
+    fn provider_cannot_register_second_unauthorized_root_under_claimed_index() {
+        let mut chain = Chain::new("second-root");
+        let alice = Dev::new(10);
+        let attacker = Dev::new(66);
+        chain.block(vec![upload(INDEX, "phone", &alice, None)]);
+
+        let res = chain.block(vec![upload(INDEX, "attacker", &attacker, None)]);
+
+        assert_ne!(res[0].code, 0);
+        assert_eq!(res[0].log, NOT_AUTHORIZED);
+        assert_eq!(
+            chain.ed25519_by_device(INDEX),
+            expected(&[("phone", &alice)])
+        );
+    }
+
+    #[test]
+    fn second_device_authorized_by_root_is_accepted() {
+        let mut chain = Chain::new("second-device");
+        let phone = Dev::new(10);
+        let laptop = Dev::new(11);
+        chain.block(vec![upload(INDEX, "phone", &phone, None)]);
+
+        let res = chain.block(vec![upload(
+            INDEX,
+            "laptop",
+            &laptop,
+            Some(("phone", &phone)),
+        )]);
+
+        assert_eq!(res[0].code, 0, "{}", res[0].log);
+        assert_eq!(event_type(&res[0]), "key_add");
+        assert_eq!(
+            chain.ed25519_by_device(INDEX),
+            expected(&[("laptop", &laptop), ("phone", &phone)])
+        );
+    }
+
+    #[test]
+    fn key_update_without_valid_authorization_is_rejected() {
+        let mut chain = Chain::new("unauthorized-update");
+        let phone = Dev::new(10);
+        let attacker = Dev::new(66);
+        chain.block(vec![upload(INDEX, "phone", &phone, None)]);
+
+        let res = chain.block(vec![
+            upload(INDEX, "phone", &attacker, None),
+            upload(INDEX, "phone", &attacker, Some(("phone", &attacker))),
+        ]);
+
+        assert_eq!(res[0].log, NOT_AUTHORIZED);
+        assert_ne!(
+            res[1].code, 0,
+            "authorization signed by a key not on the index"
+        );
+        assert_eq!(
+            chain.ed25519_by_device(INDEX),
+            expected(&[("phone", &phone)])
+        );
+    }
+
+    #[test]
+    fn rotation_authorized_by_the_device_itself_is_accepted() {
+        let mut chain = Chain::new("rotation");
+        let old = Dev::new(10);
+        let new = Dev::new(12);
+        chain.block(vec![upload(INDEX, "phone", &old, None)]);
+
+        let res = chain.block(vec![upload(INDEX, "phone", &new, Some(("phone", &old)))]);
+
+        assert_eq!(res[0].code, 0, "{}", res[0].log);
+        assert_eq!(event_type(&res[0]), "key_update");
+        assert_eq!(chain.ed25519_by_device(INDEX), expected(&[("phone", &new)]));
+    }
+
+    #[test]
+    fn rotation_authorized_by_a_different_device_under_the_same_index_is_rejected() {
+        let mut chain = Chain::new("rotation-by-other");
+        let phone = Dev::new(10);
+        let laptop = Dev::new(11);
+        let new = Dev::new(12);
+        chain.block(vec![upload(INDEX, "phone", &phone, None)]);
+        chain.block(vec![upload(
+            INDEX,
+            "laptop",
+            &laptop,
+            Some(("phone", &phone)),
+        )]);
+
+        let res = chain.block(vec![upload(
+            INDEX,
+            "phone",
+            &new,
+            Some(("laptop", &laptop)),
+        )]);
+
+        assert_eq!(
+            res[0].log,
+            "key update must be authorized by the same device's current key"
+        );
+        assert_eq!(
+            chain.ed25519_by_device(INDEX),
+            expected(&[("laptop", &laptop), ("phone", &phone)])
+        );
+    }
+
+    #[test]
+    fn bad_self_signature_is_rejected_by_check_tx_and_finalize_block() {
+        let mut chain = Chain::new("bad-self-sig");
+        let alice = Dev::new(10);
+        let other = Dev::new(66);
+        let forged = upload_signed(INDEX, "phone", &alice, other.self_sig(), None);
+
+        assert_eq!(chain.check_tx(&upload(INDEX, "phone", &alice, None)), 0);
+        assert_ne!(chain.check_tx(&forged), 0);
+
+        let res = chain.block(vec![forged]);
+
+        assert_ne!(res[0].code, 0);
+        assert!(chain.ed25519_by_device(INDEX).is_empty());
+    }
+
+    #[test]
+    fn second_unauthorized_root_in_same_block_is_rejected() {
+        let mut chain = Chain::new("same-block");
+        let alice = Dev::new(10);
+        let attacker = Dev::new(66);
+
+        let res = chain.block(vec![
+            upload(INDEX, "phone", &alice, None),
+            upload(INDEX, "attacker", &attacker, None),
+        ]);
+
+        assert_eq!(res[0].code, 0, "{}", res[0].log);
+        assert_eq!(res[1].log, NOT_AUTHORIZED);
+        assert_eq!(
+            chain.ed25519_by_device(INDEX),
+            expected(&[("phone", &alice)])
+        );
+    }
+
+    #[test]
+    fn index_containing_store_separator_is_rejected() {
+        let mut chain = Chain::new("separator");
+        let alice = Dev::new(10);
+        let attacker = Dev::new(66);
+        chain.block(vec![upload(INDEX, "phone", &alice, None)]);
+
+        let res = chain.block(vec![upload(&format!("{INDEX}/x"), "dev", &attacker, None)]);
+
+        assert_ne!(res[0].code, 0);
+        assert_eq!(
+            chain.ed25519_by_device(INDEX),
+            expected(&[("phone", &alice)])
+        );
+    }
 }

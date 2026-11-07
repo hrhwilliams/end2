@@ -14,7 +14,6 @@ lto = true
 [dependencies]
 argon2 = "0.5.3"
 hex = "0.4.3"
-sha2 = "0.10"
 async-trait = "0.1"
 axum = { version = "0.8.8", features = ["macros", "tracing", "ws"] }
 axum-extra = { version = "0.12.5", features = ["cookie"] }
@@ -36,18 +35,19 @@ time = { version = "0.3.44", features = ["formatting", "parsing", "serde"] }
 tokio = { version = "1.48.0", features = ["full"] }
 tower-http = { version = "0.6.8", features = ["cors", "trace", "tracing"] }
 uuid = { version = "1.19.0", features = ["serde", "v7"] }
+vrf-r255 = "0.1.0"
 vodozemac = { version = "0.9.0" }
 secrecy = { version = "0.10.3", features = ["serde"] }
 
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json", "time"] }
-tracing-opentelemetry = "0.32.1"
+tracing-opentelemetry = "0.33"
 
-opentelemetry-appender-tracing = "0.31.1"
-opentelemetry = { version = "0.31", features = ["trace", "metrics", "logs"] }
+opentelemetry-appender-tracing = "0.32"
+opentelemetry = { version = "0.32", features = ["trace", "metrics", "logs"] }
 opentelemetry_sdk = { version = "0.32", features = ["trace", "metrics", "logs"] }
-opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic", "trace", "metrics", "logs"] }
-opentelemetry-http = "0.31.0"
+opentelemetry-otlp = { version = "0.32", features = ["grpc-tonic", "trace", "metrics", "logs"] }
+opentelemetry-http = "0.32"
 
 thiserror = "2.0.18"
 

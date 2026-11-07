@@ -32,7 +32,7 @@ pub async fn telemetry(request: Request<Body>, next: Next) -> Response {
         "http.route" = %route,
     );
 
-    span.set_parent(parent_ctx).expect("set_parent");
+    let _ = span.set_parent(parent_ctx);
 
     let start = tokio::time::Instant::now();
 

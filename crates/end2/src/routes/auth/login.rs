@@ -2,7 +2,7 @@ use axum::{Json, extract::State, response::IntoResponse};
 use secrecy::SecretString;
 use serde::Deserialize;
 
-use crate::{ApiError, AppState, WebSession};
+use crate::{ApiError, AppState, UserResponse, WebSession};
 
 #[derive(Deserialize)]
 pub struct LoginRequest {
@@ -21,5 +21,5 @@ pub async fn login(
         .web_sessions
         .insert_into_session(web_session, "user_id".to_string(), user.id)
         .await?;
-    Ok(Json(user))
+    Ok(Json(UserResponse::new(&app_state, user)))
 }

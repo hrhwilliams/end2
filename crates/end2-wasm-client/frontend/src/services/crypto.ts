@@ -15,6 +15,7 @@ import type { UserInfo } from "../types/user";
 import { markRaw } from "vue";
 import { Err, Ok, request, type ApiResult } from "../api";
 import { db, type SessionPickle } from "../db";
+import { fetchIndexDevices, readsValidators, verifiedIndex } from "./directory";
 import { createWalletClient, http } from 'viem'
 import type { WalletClient } from 'viem'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
@@ -57,7 +58,17 @@ export async function initDevice(user: UserInfo): Promise<ApiResult<null>> {
 
     const keys = device.keys() as UploadDeviceKeys;
     response = await request<DeviceInfo>("/me/device", "PUT", keys);
-    if (!response.ok) {
+    if (readsValidators) {
+      const confirmed = await confirmRegistration(
+        user,
+        device.device_id(),
+        keys,
+        response,
+      );
+      if (!confirmed.ok) {
+        return confirmed;
+      }
+    } else if (!response.ok) {
       return Err(response.error);
     }
 
@@ -83,6 +94,40 @@ export async function initDevice(user: UserInfo): Promise<ApiResult<null>> {
   }));
 
   return Ok(null);
+}
+
+const IMPERSONATION_WARNING =
+  "Your directory index already has a root key. If you have not registered another device, the provider may be impersonating you.";
+
+// Reads the validators, not the provider's reply, to confirm this device's keys are under the user's own index.
+async function confirmRegistration(
+  user: UserInfo,
+  deviceId: string,
+  keys: UploadDeviceKeys,
+  put: ApiResult<DeviceInfo>,
+): Promise<ApiResult<null>> {
+  const index = verifiedIndex(user);
+  if (!index.ok) {
+    return index;
+  }
+  const devices = await fetchIndexDevices(index.value);
+  if (!devices.ok) {
+    return devices;
+  }
+
+  const mine = devices.value[deviceId];
+  if (mine?.x25519 === keys.x25519 && mine.ed25519 === keys.ed25519) {
+    return Ok(null);
+  }
+  if (Object.keys(devices.value).length > 0) {
+    return Err({ status: 0, message: IMPERSONATION_WARNING });
+  }
+  return put.ok
+    ? Err({
+        status: 0,
+        message: "this device's keys are not in the key directory",
+      })
+    : Err(put.error);
 }
 
 export async function saveDevice(user_id: string): Promise<void> {

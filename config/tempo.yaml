@@ -11,13 +11,6 @@ distributor:
         grpc:
           endpoint: 0.0.0.0:4317
 
-ingester:
-  lifecycler:
-    ring:
-      kvstore:
-        store: memberlist
-      replication_factor: 1
-
 metrics_generator:
   registry:
     external_labels:
@@ -44,4 +37,4 @@ storage:
 overrides:
   defaults:
     metrics_generator:
-      processors: [service-graphs, span-metrics, local-blocks]
+      processors: [service-graphs, span-metrics]

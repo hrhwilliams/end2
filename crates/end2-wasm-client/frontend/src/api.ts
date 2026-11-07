@@ -1,4 +1,4 @@
-const API = import.meta.env.VITE_API_URL;
+const API = import.meta.env.VITE_API_URL ?? "/api";
 
 export type ApiResult<T> =
   | { ok: true; value: T }

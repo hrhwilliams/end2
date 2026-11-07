@@ -32,7 +32,7 @@ export const useUserStore = defineStore("user", () => {
   }
 
   async function fetch_user_info(user_id: string) {
-    if (users.value[user_id]) {
+    if (users.value[user_id]?.directory) {
       return;
     }
 
@@ -50,8 +50,13 @@ export const useUserStore = defineStore("user", () => {
     }
   }
 
+  async function getUser(user_id: string): Promise<UserInfo | null> {
+    await fetch_user_info(user_id);
+    return users.value[user_id] ?? null;
+  }
+
   function updateUser(user: UserInfo) {
-    users.value[user.id] = user;
+    users.value[user.id] = { ...users.value[user.id], ...user };
   }
 
   function has_nickname(user_id: string) {
@@ -117,6 +122,7 @@ export const useUserStore = defineStore("user", () => {
     get_username,
     get_display_name,
     change_nickname,
+    getUser,
     updateUser,
   };
 });

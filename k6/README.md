@@ -23,6 +23,15 @@ from it.
 k6 run --vus 250 --duration 5m get_device.js
 ```
 
+The same read on the secure path: the keys come from the validators through `/comet/<n>/`
+rather than from the backend, and are accepted only when f+1 = 2 validators return the same
+answer, as the web client does. `ASK=2` asks only two validators first and falls back to the
+other two on a split.
+
+```
+k6 run --vus 50 --iterations 500 get_device_quorum.js
+```
+
 ```
 $env:K6_PROMETHEUS_RW_FLUSH_PERIOD="5s"; k6 run --out prometheus-rw=http://localhost:9090/api/v1/write script.js
 ```
