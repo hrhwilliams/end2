@@ -116,3 +116,159 @@ All runs were done 50 VUs and 500 iterations
 |CometBFT|64.5|46|60|171|73|148.07|
 |CometBFT|65.78|47|60|162|85|139.01|
 |CometBFT|67.4|44|62|180|86.1|145.01|
+
+## Quorum
+
+Run using `get_device_quorum.js` with 50 VUs and 500 iterations each,
+with all four validators reset before each run. Client either asks all four validators, two validators, or asks the
+service to query a node on its behalf.
+
+|Read path|VUs|Average (ms)|Minimum (ms)|Median (ms)|Maximum (ms)|90th percentile (ms)|99th percentile(ms)|Samples|
+|---|---|---|---|---|---|---|---|---|
+|Quorum, ask all 4|50|86.63|51|78|236|122.19|186.11|499|
+|Quorum, ask all 4|50|83.17|50|77|224|117|155.01|500|
+|Quorum, ask all 4|50|80.86|51|72|557|110.2|155.21|500|
+|Quorum, ask 2 first|50|78.15|42|74|193|104.3|138.05|498|
+|Quorum, ask 2 first|50|72.13|46|66|198|98|141.07|499|
+|Quorum, ask 2 first|50|76.07|49|68|209|105|138.03|499|
+|Backend to node0|50|84.12|45|66|318|169|248|500|
+|Backend to node0|50|70.59|40|61|307|87.4|255|497|
+|Backend to node0|50|73.08|41|62|294|94.2|267.03|500|
+
+Mean of the three runs plus or minus one standard deviation
+
+|Read path|VUs|Median (ms)|90th percentile (ms)|99th percentile (ms)|
+|---|---|---|---|---|
+|Quorum, ask all 4|50|75.7 ± 2.6|116.5 ± 4.9|165.4 ± 14.6|
+|Quorum, ask 2 first|50|69.3 ± 3.4|102.4 ± 3.1|139.1 ± 1.4|
+|Backend to node0|50|63.0 ± 2.2|116.9 ± 37.0|256.7 ± 7.9|
+
+### Raw output
+
+```
+$ ASK=4 k6 run --vus 50 --iterations 500 get_device_quorum.js
+
+time="2026-11-06T15:45:04-08:00" level=error msg="VU 29 iter 7: PUT failed: error code: 502\n" source=console
+    checks_total.......: 1497    98.605113/s
+    checks_succeeded...: 100.00% 1497 out of 1497
+    checks_failed......: 0.00%   0 out of 1497
+    ✓ quorum agreed on keys
+    ✓ has x25519
+    ✓ has ed25519
+    get_device_quorum_ms...........: avg=86.63ms  min=51ms     med=78ms    max=236ms p(90)=122.19ms p(99)=186.11ms
+    http_req_failed................: 0.02%  1 out of 3995
+    iterations.....................: 500    32.93424/s
+default ✓ [ 100% ] 50 VUs  00m15.2s/10m0s  500/500 shared iters
+
+$ ASK=4 k6 run --vus 50 --iterations 500 get_device_quorum.js
+
+    checks_total.......: 1500    95.799014/s
+    checks_succeeded...: 100.00% 1500 out of 1500
+    checks_failed......: 0.00%   0 out of 1500
+    ✓ quorum agreed on keys
+    ✓ has x25519
+    ✓ has ed25519
+    get_device_quorum_ms...........: avg=83.17ms  min=50ms     med=77ms    max=224ms p(90)=117ms    p(99)=155.01ms
+    http_req_failed................: 0.00%  0 out of 4000
+    iterations.....................: 500    31.933005/s
+default ✓ [ 100% ] 50 VUs  00m15.7s/10m0s  500/500 shared iters
+
+$ ASK=4 k6 run --vus 50 --iterations 500 get_device_quorum.js
+
+    checks_total.......: 1500    97.826391/s
+    checks_succeeded...: 100.00% 1500 out of 1500
+    checks_failed......: 0.00%   0 out of 1500
+    ✓ quorum agreed on keys
+    ✓ has x25519
+    ✓ has ed25519
+    get_device_quorum_ms...........: avg=80.86ms  min=51ms    med=72ms    max=557ms p(90)=110.2ms  p(99)=155.21ms
+    http_req_failed................: 0.00%  0 out of 4000
+    iterations.....................: 500    32.608797/s
+default ✓ [ 100% ] 50 VUs  00m15.3s/10m0s  500/500 shared iters
+
+$ ASK=2 k6 run --vus 50 --iterations 500 get_device_quorum.js
+
+time="2026-11-06T15:46:55-08:00" level=error msg="VU 33 iter 2: PUT failed: {\"status\":401,\"message\":\"no such user\",\"detail\":null}" source=console
+time="2026-11-06T15:46:55-08:00" level=error msg="VU 27 iter 3: PUT failed: {\"status\":401,\"message\":\"no such user\",\"detail\":null}" source=console
+    checks_total.......: 1494    96.755324/s
+    checks_succeeded...: 100.00% 1494 out of 1494
+    checks_failed......: 0.00%   0 out of 1494
+    ✓ quorum agreed on keys
+    ✓ has x25519
+    ✓ has ed25519
+    get_device_quorum_ms...........: avg=78.15ms  min=42ms     med=74ms    max=193ms p(90)=104.3ms  p(99)=138.05ms
+    http_req_failed................: 0.20%  6 out of 2994
+    iterations.....................: 500    32.3813/s
+default ✓ [ 100% ] 50 VUs  00m15.4s/10m0s  500/500 shared iters
+
+$ ASK=2 k6 run --vus 50 --iterations 500 get_device_quorum.js
+
+time="2026-11-06T15:47:23-08:00" level=error msg="VU 32 iter 3: PUT failed: {\"status\":401,\"message\":\"no such user\",\"detail\":null}" source=console
+    checks_total.......: 1497    98.352688/s
+    checks_succeeded...: 100.00% 1497 out of 1497
+    checks_failed......: 0.00%   0 out of 1497
+    ✓ quorum agreed on keys
+    ✓ has x25519
+    ✓ has ed25519
+    get_device_quorum_ms...........: avg=72.13ms  min=46ms     med=66ms    max=198ms p(90)=98ms     p(99)=141.07ms
+    http_req_failed................: 0.10%  3 out of 2997
+    iterations.....................: 500    32.849929/s
+default ✓ [ 100% ] 50 VUs  00m15.2s/10m0s  500/500 shared iters
+
+$ ASK=2 k6 run --vus 50 --iterations 500 get_device_quorum.js
+
+time="2026-11-06T15:48:01-08:00" level=error msg="VU 13 iter 10: PUT failed: error code: 502\n" source=console
+    checks_total.......: 1497    98.907008/s
+    checks_succeeded...: 100.00% 1497 out of 1497
+    checks_failed......: 0.00%   0 out of 1497
+    ✓ quorum agreed on keys
+    ✓ has x25519
+    ✓ has ed25519
+    get_device_quorum_ms...........: avg=76.07ms  min=49ms    med=68ms    max=209ms p(90)=105ms    p(99)=138.03ms
+    http_req_failed................: 0.03%  1 out of 2997
+    iterations.....................: 500    33.035073/s
+default ✓ [ 100% ] 50 VUs  00m15.1s/10m0s  500/500 shared iters
+
+$ k6 run --vus 50 --iterations 500 get_device.js
+
+    checks_total.......: 1500    97.601859/s
+    checks_succeeded...: 100.00% 1500 out of 1500
+    checks_failed......: 0.00%   0 out of 1500
+    ✓ get device 200
+    ✓ has x25519
+    ✓ has ed25519
+    get_device_ms..................: avg=84.12ms  min=45ms     med=66ms     max=318ms p(90)=169ms   p(99)=248ms
+    http_req_failed................: 0.00%  0 out of 2000
+    iterations.....................: 500    32.533953/s
+default ✓ [ 100% ] 50 VUs  00m15.4s/10m0s  500/500 shared iters
+
+$ k6 run --vus 50 --iterations 500 get_device.js
+
+time="2026-11-06T15:49:24-08:00" level=error msg="VU 33 iter 10: PUT failed: {\"status\":401,\"message\":\"no such user\",\"detail\":null}" source=console
+time="2026-11-06T15:49:24-08:00" level=error msg="VU 35 iter 10: PUT failed: {\"status\":401,\"message\":\"no such user\",\"detail\":null}" source=console
+time="2026-11-06T15:49:24-08:00" level=error msg="VU 24 iter 10: PUT failed: {\"status\":401,\"message\":\"no such user\",\"detail\":null}" source=console
+    checks_total.......: 1491    94.389312/s
+    checks_succeeded...: 100.00% 1491 out of 1491
+    checks_failed......: 0.00%   0 out of 1491
+    ✓ get device 200
+    ✓ has x25519
+    ✓ has ed25519
+    get_device_ms..................: avg=70.59ms  min=40ms     med=61ms     max=307ms p(90)=87.4ms   p(99)=255ms
+    http_req_failed................: 0.45%  9 out of 1997
+    iterations.....................: 500    31.653022/s
+default ✓ [ 100% ] 50 VUs  00m15.8s/10m0s  500/500 shared iters
+
+$ k6 run --vus 50 --iterations 500 get_device.js
+
+    checks_total.......: 1500    99.545674/s
+    checks_succeeded...: 100.00% 1500 out of 1500
+    checks_failed......: 0.00%   0 out of 1500
+    ✓ get device 200
+    ✓ has x25519
+    ✓ has ed25519
+    get_device_ms..................: avg=73.08ms  min=41ms     med=62ms     max=294ms p(90)=94.2ms   p(99)=267.03ms
+    http_req_failed................: 0.00%  0 out of 2000
+    iterations.....................: 500    33.181891/s
+default ✓ [ 100% ] 50 VUs  00m15.1s/10m0s  500/500 shared iters
+
+```
