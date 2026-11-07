@@ -109,6 +109,7 @@ services:
       - tempo
 
   anvil:
+    profiles: [ethereum]
     build:
       context: ./contract
     networks:

@@ -272,3 +272,23 @@ $ k6 run --vus 50 --iterations 500 get_device.js
 default ✓ [ 100% ] 50 VUs  00m15.1s/10m0s  500/500 shared iters
 
 ```
+
+## VRF
+
+To observe the use of VRFs, the following curl commands can be used to query
+individual nodes. User identifiers are obfuscated with a VRF to prevent user
+enumeration attacks.
+
+### List transactions recorded on the chain from one node
+
+```sh
+curl -s -G https://chat.fiatlux.dev/comet/0/tx_search --data-urlencode 'query="tx.height>0"' \
+  | grep -o '"tx":"[^"]*"' | cut -d'"' -f4 | while read t; do echo "$t" | base64 -d; echo; done
+```
+
+### Look up a user by their VRF hash
+
+```sh
+curl -s -G https://chat.fiatlux.dev/comet/0/abci_query --data-urlencode 'path="devices"' \
+  --data-urlencode 'data="b691af57d7d28b1cabd26e5ed4ea98307ad586f488dc0efdad7ff33d09d6f747b9d792737298613360c65898ae014dca245646f6f4578c4ca0488098f089c3da"'
+```
